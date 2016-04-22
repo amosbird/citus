@@ -17,9 +17,15 @@
 #include "c.h"
 #include "miscadmin.h"
 
+#include "distributed/listutils.h"
+#include "distributed/master_metadata_utility.h"
 #include "distributed/relay_utility.h"
 #include "distributed/resource_lock.h"
+#include "nodes/pg_list.h"
 #include "storage/lmgr.h"
+
+
+static int CompareShardIntervalsById(const void *leftElement, const void *rightElement);
 
 
 /*
@@ -118,4 +124,59 @@ UnlockJobResource(uint64 jobId, LOCKMODE lockmode)
 	SET_LOCKTAG_JOB_RESOURCE(tag, MyDatabaseId, jobId);
 
 	LockRelease(&tag, lockmode, sessionLock);
+}
+
+
+/*
+ * LockShards takes shared locks on the metadata and the data of all shards in
+ * shardIntervalList. This prevents concurrent placement changes and concurrent
+ * DML statements that require an exclusive lock.
+ */
+void
+LockShards(List *shardIntervalList)
+{
+	ListCell *shardIntervalCell = NULL;
+
+	/* lock shards in order of shard id to prevent deadlock */
+	shardIntervalList = SortList(shardIntervalList, CompareShardIntervalsById);
+
+	foreach(shardIntervalCell, shardIntervalList)
+	{
+		ShardInterval *shardInterval = (ShardInterval *) lfirst(shardIntervalCell);
+		int64 shardId = shardInterval->shardId;
+
+		/* prevent concurrent changes to number of placements */
+		LockShardDistributionMetadata(shardId, ShareLock);
+
+		/* prevent concurrent update/delete statements */
+		LockShardResource(shardId, ShareLock);
+	}
+}
+
+
+/*
+ * CompareShardIntervalsById is a comparison function for sort shard
+ * intervals by their shard ID.
+ */
+static int
+CompareShardIntervalsById(const void *leftElement, const void *rightElement)
+{
+	ShardInterval *leftInterval = *((ShardInterval **) leftElement);
+	ShardInterval *rightInterval = *((ShardInterval **) rightElement);
+	int64 leftShardId = leftInterval->shardId;
+	int64 rightShardId = rightInterval->shardId;
+
+	/* we compare 64-bit integers, instead of casting their difference to int */
+	if (leftShardId > rightShardId)
+	{
+		return 1;
+	}
+	else if (leftShardId < rightShardId)
+	{
+		return -1;
+	}
+	else
+	{
+		return 0;
+	}
 }

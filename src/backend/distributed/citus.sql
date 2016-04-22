@@ -166,6 +166,13 @@ CREATE FUNCTION master_apply_delete_command(text)
     AS 'MODULE_PATHNAME', $$master_apply_delete_command$$;
 COMMENT ON FUNCTION master_apply_delete_command(text)
     IS 'drop shards matching delete criteria and update metadata';
+    
+CREATE FUNCTION master_delete_from_shards(text)
+    RETURNS integer
+    LANGUAGE C STRICT
+    AS 'MODULE_PATHNAME', $$master_delete_from_shards$$;
+COMMENT ON FUNCTION master_apply_delete_command(text)
+    IS 'push delete query to shards ';
 
 CREATE FUNCTION master_get_active_worker_nodes(OUT node_name text, OUT node_port bigint)
     RETURNS SETOF record
