@@ -73,6 +73,7 @@ test: multi_large_table_task_assignment
 # ----------
 test: multi_stage_large_records
 test: multi_master_delete_protocol
+test: multi_shard_modify
 
 # ----------
 # Tests around DDL statements run on distributed tables

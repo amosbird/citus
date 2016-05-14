@@ -13,6 +13,7 @@
 #include "postgres.h" /* IWYU pragma: keep */
 #include "c.h"
 
+#include "nodes/pg_list.h"
 #include "storage/lock.h"
 
 

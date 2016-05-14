@@ -167,10 +167,10 @@ CREATE FUNCTION master_apply_delete_command(text)
 COMMENT ON FUNCTION master_apply_delete_command(text)
     IS 'drop shards matching delete criteria and update metadata';
     
-CREATE FUNCTION master_delete_from_shards(text)
+CREATE FUNCTION master_multi_shard_modify(text)
     RETURNS integer
     LANGUAGE C STRICT
-    AS 'MODULE_PATHNAME', $$master_delete_from_shards$$;
+    AS 'MODULE_PATHNAME', $$master_multi_shard_modify$$;
 COMMENT ON FUNCTION master_apply_delete_command(text)
     IS 'push delete query to shards ';
 

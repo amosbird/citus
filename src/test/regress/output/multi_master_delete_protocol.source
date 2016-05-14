@@ -20,120 +20,6 @@ SELECT master_create_distributed_table('customer_delete_protocol', 'c_custkey', 
 \STAGE customer_delete_protocol FROM '@abs_srcdir@/data/customer.1.data' with delimiter '|'
 \STAGE customer_delete_protocol FROM '@abs_srcdir@/data/customer.2.data' with delimiter '|'
 \STAGE customer_delete_protocol FROM '@abs_srcdir@/data/customer.3.data' with delimiter '|'
--- Testing master_delete_from_shards
--- Verify that master_delete_from_shards cannot be called in a transaction block
-BEGIN;
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey > 500 AND c_custkey < 500');
-ERROR:  master_delete_from_shards cannot run inside a transaction block
-ROLLBACK;
--- Check that master_delete_from_shards cannot be called with non-distributed tables
-CREATE TEMPORARY TABLE temporary_nondistributed_table (
-		col_1 integer,
-		col_2 text);
-INSERT INTO temporary_nondistributed_table VALUES (37, 'eren'), (31, 'onder');
-SELECT master_delete_from_shards('DELETE FROM temporary_nondistributed_table WHERE col_1 = 37');
-ERROR:  relation "temporary_nondistributed_table" is not a distributed table
--- commands with mutable functions in their quals
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey = (random() * 1000)');
-ERROR:  functions used in modification queries on distributed tables must be marked IMMUTABLE
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_nationkey = (random() * 1000)');
-ERROR:  functions used in modification queries on distributed tables must be marked IMMUTABLE
--- commands with mutable but non-volatilte functions(ie: stable func.) in their quals
-CREATE FUNCTION temp_stable_func() RETURNS integer AS 'SELECT 3737;' LANGUAGE SQL STABLE;
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey = temp_stable_func()');
-ERROR:  functions used in modification queries on distributed tables must be marked IMMUTABLE
--- commands with immutable functions in their quals
-CREATE FUNCTION temp_immutable_func() RETURNS integer AS 'SELECT 3737;' LANGUAGE SQL IMMUTABLE;
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey = temp_immutable_func()');
- master_delete_from_shards 
----------------------------
-                         0
-(1 row)
-
--- DELETE with expression in WHERE clause
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey = (3*18)');
- master_delete_from_shards 
----------------------------
-                         1
-(1 row)
-
--- commands with a USING clause are unsupported
-CREATE TEMP TABLE temp_nations(name text, key integer);
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol USING temp_nations WHERE customer_delete_protocol.c_nationkey = temp_nations.key AND temp_nations.name = ''foobar'' ');
-ERROR:  cannot delete from distributed table
-DETAIL:  Delete on multiple tables is not supported
--- commands with a RETURNING clause are unsupported
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey = 903 RETURNING *');
-ERROR:  cannot perform distributed planning for the given modification
-DETAIL:  RETURNING clauses are not supported in distributed modifications.
--- commands containing a CTE are unsupported
-SELECT master_delete_from_shards('WITH deleted_stuff AS (INSERT INTO customer_delete_protocol DEFAULT VALUES RETURNING *) DELETE FROM customer_delete_protocol');
-ERROR:  cannot perform distributed planning for the given modification
-DETAIL:  Common table expressions are not supported in distributed modifications.
--- cursors are not supported
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE CURRENT OF cursor_name;');
-WARNING:  Bad result from localhost:57638
-DETAIL:  Remote message: cursor "cursor_name" does not exist
-ERROR:  Could not send query to shard placement.
--- Check that we can successfully delete from multiple shards with 1PC
-SET citus.multi_shard_commit_protocol TO '1pc';
-SELECT count(*) FROM customer_delete_protocol;
- count 
--------
-  2999
-(1 row)
-
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey < 100');
- master_delete_from_shards 
----------------------------
-                        98
-(1 row)
-
-SELECT count(*) FROM customer_delete_protocol;
- count 
--------
-  2901
-(1 row)
-
--- Check that we can successfully delete from multiple shards with 2PC
-SET citus.multi_shard_commit_protocol TO '2pc';
-SELECT count(*) FROM customer_delete_protocol;
- count 
--------
-  2901
-(1 row)
-
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey < 200');
- master_delete_from_shards 
----------------------------
-                       100
-(1 row)
-
-SELECT count(*) FROM customer_delete_protocol;
- count 
--------
-  2801
-(1 row)
-
--- Check that shard pruning works
-SET client_min_messages TO DEBUG2;
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_custkey = 5001');
-DEBUG:  predicate pruning for shardId 102042
-DEBUG:  predicate pruning for shardId 102044
-DEBUG:  predicate pruning for shardId 102043
- master_delete_from_shards 
----------------------------
-                         0
-(1 row)
-
-SET client_min_messages TO NOTICE;
--- Check that master_delete_from_shards works without partition keys
-SELECT master_delete_from_shards('DELETE FROM customer_delete_protocol WHERE c_name LIKE ''Customer#00000098_'' ');
- master_delete_from_shards 
----------------------------
-                        10
-(1 row)
-
 -- Testing master_apply_delete_command
 -- Check that we don't support conditions on columns other than partition key.
 SELECT master_apply_delete_command('DELETE FROM customer_delete_protocol
@@ -151,7 +37,7 @@ SELECT master_apply_delete_command('DELETE FROM customer_delete_protocol
 SELECT count(*) from customer_delete_protocol;
  count 
 -------
-  2791
+  3000
 (1 row)
 
 -- Delete one shard that satisfies the given conditions.
@@ -165,7 +51,7 @@ SELECT master_apply_delete_command('DELETE FROM customer_delete_protocol
 SELECT count(*) from customer_delete_protocol;
  count 
 -------
-  1791
+  2000
 (1 row)
 
 -- Delete all shards if no condition is provided.

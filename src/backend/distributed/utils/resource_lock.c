@@ -21,7 +21,6 @@
 #include "distributed/master_metadata_utility.h"
 #include "distributed/relay_utility.h"
 #include "distributed/resource_lock.h"
-#include "nodes/pg_list.h"
 #include "storage/lmgr.h"
 
 

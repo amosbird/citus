@@ -1,0 +1,137 @@
+--
+-- MULTI_SHARD_MODIFY
+--
+-- Create a new range partitioned customer_delete_protocol table and stage data into it.
+DROP TABLE IF EXISTS customer_delete_protocol;
+CREATE TABLE customer_delete_protocol (
+        c_custkey integer not null,
+        c_name varchar(25) not null,
+        c_address varchar(40) not null,
+        c_nationkey integer not null,
+        c_phone char(15) not null,
+        c_acctbal decimal(15,2) not null,
+        c_mktsegment char(10) not null,
+        c_comment varchar(117) not null);
+SELECT master_create_distributed_table('customer_delete_protocol', 'c_custkey', 'append');
+ master_create_distributed_table 
+---------------------------------
+ 
+(1 row)
+
+\STAGE customer_delete_protocol FROM '@abs_srcdir@/data/customer.1.data' with delimiter '|'
+\STAGE customer_delete_protocol FROM '@abs_srcdir@/data/customer.2.data' with delimiter '|'
+\STAGE customer_delete_protocol FROM '@abs_srcdir@/data/customer.3.data' with delimiter '|'
+-- Testing master_multi_shard_modify
+-- Verify that master_multi_shard_modify cannot be called in a transaction block
+BEGIN;
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey > 500 AND c_custkey < 500');
+ERROR:  master_multi_shard_modify cannot run inside a transaction block
+ROLLBACK;
+-- Check that master_multi_shard_modify cannot be called with non-distributed tables
+CREATE TEMPORARY TABLE temporary_nondistributed_table (
+		col_1 integer,
+		col_2 text);
+INSERT INTO temporary_nondistributed_table VALUES (37, 'eren'), (31, 'onder');
+SELECT master_multi_shard_modify('DELETE FROM temporary_nondistributed_table WHERE col_1 = 37');
+ERROR:  relation "temporary_nondistributed_table" is not a distributed table
+-- commands with mutable functions in their quals
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey = (random() * 1000)');
+ERROR:  functions used in modification queries on distributed tables must be marked IMMUTABLE
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_nationkey = (random() * 1000)');
+ERROR:  functions used in modification queries on distributed tables must be marked IMMUTABLE
+-- commands with mutable but non-volatilte functions(ie: stable func.) in their quals
+CREATE FUNCTION temp_stable_func() RETURNS integer AS 'SELECT 3737;' LANGUAGE SQL STABLE;
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey = temp_stable_func()');
+ERROR:  functions used in modification queries on distributed tables must be marked IMMUTABLE
+-- commands with immutable functions in their quals
+CREATE FUNCTION temp_immutable_func() RETURNS integer AS 'SELECT 3737;' LANGUAGE SQL IMMUTABLE;
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey = temp_immutable_func()');
+ master_multi_shard_modify 
+---------------------------
+                         0
+(1 row)
+
+-- DELETE with expression in WHERE clause
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey = (3*18)');
+ master_multi_shard_modify 
+---------------------------
+                         1
+(1 row)
+
+-- commands with a USING clause are unsupported
+CREATE TEMP TABLE temp_nations(name text, key integer);
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol USING temp_nations WHERE customer_delete_protocol.c_nationkey = temp_nations.key AND temp_nations.name = ''foobar'' ');
+ERROR:  cannot perform distributed planning for the given modification
+DETAIL:  Joins are not supported in distributed modifications.
+-- commands with a RETURNING clause are unsupported
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey = 903 RETURNING *');
+ERROR:  cannot perform distributed planning for the given modification
+DETAIL:  RETURNING clauses are not supported in distributed modifications.
+-- commands containing a CTE are unsupported
+SELECT master_multi_shard_modify('WITH deleted_stuff AS (INSERT INTO customer_delete_protocol DEFAULT VALUES RETURNING *) DELETE FROM customer_delete_protocol');
+ERROR:  cannot perform distributed planning for the given modification
+DETAIL:  Common table expressions are not supported in distributed modifications.
+-- cursors are not supported
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE CURRENT OF cursor_name;');
+WARNING:  Bad result from localhost:57638
+DETAIL:  Remote message: cursor "cursor_name" does not exist
+ERROR:  Could not send query to shard placement.
+-- Check that we can successfully delete from multiple shards with 1PC
+SET citus.multi_shard_commit_protocol TO '1pc';
+SELECT count(*) FROM customer_delete_protocol;
+ count 
+-------
+  2999
+(1 row)
+
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey < 100');
+ master_multi_shard_modify 
+---------------------------
+                        98
+(1 row)
+
+SELECT count(*) FROM customer_delete_protocol;
+ count 
+-------
+  2901
+(1 row)
+
+-- Check that we can successfully delete from multiple shards with 2PC
+SET citus.multi_shard_commit_protocol TO '2pc';
+SELECT count(*) FROM customer_delete_protocol;
+ count 
+-------
+  2901
+(1 row)
+
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey < 200');
+ master_multi_shard_modify 
+---------------------------
+                       100
+(1 row)
+
+SELECT count(*) FROM customer_delete_protocol;
+ count 
+-------
+  2801
+(1 row)
+
+-- Check that shard pruning works
+SET client_min_messages TO DEBUG2;
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_custkey = 5001');
+DEBUG:  predicate pruning for shardId 102046
+DEBUG:  predicate pruning for shardId 102048
+DEBUG:  predicate pruning for shardId 102047
+ master_multi_shard_modify 
+---------------------------
+                         0
+(1 row)
+
+SET client_min_messages TO NOTICE;
+-- Check that master_multi_shard_modify works without partition keys
+SELECT master_multi_shard_modify('DELETE FROM customer_delete_protocol WHERE c_name LIKE ''Customer#00000098_'' ');
+ master_multi_shard_modify 
+---------------------------
+                        10
+(1 row)
+

@@ -8,6 +8,7 @@
 /multi_fdw_stage_data.sql
 /multi_large_shardid.sql
 /multi_master_delete_protocol.sql
+/multi_shard_modify.sql
 /multi_outer_join.sql
 /multi_stage_data.sql
 /multi_stage_large_records.sql
